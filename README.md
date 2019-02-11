@@ -14,7 +14,10 @@ go get -u github.com/nizhib/cannonade
 Usage: cannonade [options...] <url>
 
 Options:
+  -apikey        API Key to use as a query parameter. Default is empty.
   -image         Path of the image to shoot with. Default is "example.jpg".
   -num-clients   Number of parallel requests. Default is 8.
   -num-requests  Total number of requests. Default is 100.
+  -silent        Disable any output but errors.
+  -verbose       Print every response received.
 ```

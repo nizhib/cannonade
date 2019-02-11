@@ -27,6 +27,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/montanaflynn/stats"
+	"github.com/schollz/progressbar"
 	"image"
 	"image/color"
 	"image/draw"
@@ -48,6 +50,11 @@ const timeout = 60 * time.Second
 
 type Request struct {
 	Image string `json:"image"`
+}
+
+type Response struct {
+	Body string
+	Latency time.Duration
 }
 
 func panicIf(err error) {
@@ -112,12 +119,18 @@ func makeCannonball(img image.Image) []byte {
 	return cannonball
 }
 
-func fire(endpoint string, ball []byte) string {
+func fire(endpoint string, ball []byte, apikey string) string {
 	client := http.Client{
 		Timeout: timeout,
 	}
 	buf := bytes.NewBuffer(ball)
-	res, err := client.Post(endpoint, "application/json; charset=utf-8", buf)
+
+	url := endpoint
+	if apikey != "" {
+		url += "?apikey=" + apikey
+	}
+
+	res, err := client.Post(url, "application/json; charset=utf-8", buf)
 	if err != nil {
 		return fmt.Sprintf("Error while sending the request: %s", err)
 	}
@@ -131,18 +144,69 @@ func fire(endpoint string, ball []byte) string {
 	return buf.String()
 }
 
-func cannonade(endpoint string, pipeline <-chan []byte, responses chan<- string) {
+func cannonade(endpoint string, apikey string, pipeline <-chan []byte, responses chan<- Response) {
 	for cannonball := range pipeline {
-		responses <- fire(endpoint, cannonball)
+		start := time.Now()
+		body := fire(endpoint, cannonball, apikey)
+		latency := time.Since(start)
+		responses <- Response{body, latency}
 	}
 }
 
+func printStats(latencies []float64) {
+	min, err := stats.Min(latencies)
+	panicIf(err)
+	median, err := stats.Median(latencies)
+	panicIf(err)
+	max, err := stats.Max(latencies)
+	panicIf(err)
+	sum, err := stats.Sum(latencies)
+	panicIf(err)
+
+	avg := sum / float64(len(latencies))
+	rps := 1000 / avg
+
+	fmt.Println()
+	fmt.Println(" # reqs     Avg     Min     Max  |  Median   req/s  ")
+	fmt.Println("----------------------------------------------------")
+	fmt.Printf("%7d", len(latencies))
+	fmt.Printf("%8.0f", avg)
+	fmt.Printf("%8.0f", min)
+	fmt.Printf("%8.0f", max)
+	fmt.Print("  |")
+	fmt.Printf("%8.0f", median)
+	fmt.Printf("%8.2f\n", rps)
+
+	fmt.Println()
+
+	pthresholds := []int64{50, 80, 90, 95, 99, 100}
+	percentiles := make([]float64, len(pthresholds))
+
+	for i, threshold := range pthresholds {
+		percentiles[i], err = stats.Percentile(latencies, float64(threshold))
+		if err != nil {
+			percentiles[i] = math.NaN()
+		}
+	}
+
+	fmt.Println(" # reqs     50%    80%    90%    95%    99%   100%  ")
+	fmt.Println("----------------------------------------------------")
+	fmt.Printf("%7d ", len(latencies))
+	for _, percentile := range percentiles {
+		fmt.Printf("%7.0f", percentile)
+	}
+	fmt.Print("\n")
+}
+
 func main() {
+	// Parse CLI options
 	imagePath := flag.String("image", defaultImage, "path of the image to shoot with")
 	numClients := flag.Int("num-clients", defaultNumClients, "number of parallel requests")
 	numRequests := flag.Int("num-requests", defaultNumRequests, "total number of requests")
+	apikey := flag.String("apikey", "", "api key to add in the header")
+	verbose := flag.Bool("verbose", false, "Show each response in stdout")
+	silent := flag.Bool("silent", false, "Disable any output")
 	flag.Parse()
-
 	args := flag.Args()
 	if len(args) == 0 {
 		fmt.Println("Provide an endpoint to shoot at!")
@@ -150,28 +214,61 @@ func main() {
 	}
 	endpoint := args[0]
 
+	// Open an image to shoot with
 	img, err := readImage(*imagePath)
 	if err != nil {
 		fmt.Printf("Failed opening file as jpeg image: %s", err)
 		os.Exit(1)
 	}
 
+	// Create channels
 	pipeline := make(chan []byte, *numRequests)
-	responses := make(chan string, *numRequests)
+	responses := make(chan Response, *numRequests)
+	latencies := make([]float64, *numRequests)
 
-	fmt.Print("Producing cannonballs... ")
+	// Prepare binary requests bodies
+	if !*silent {
+		fmt.Print("Producing cannonballs... ")
+	}
 	for r := 0; r < *numRequests; r++ {
 		pipeline <- makeCannonball(img)
 	}
-	close(pipeline)
-	fmt.Print("done\n")
-
-	for c := 0; c < *numClients; c++ {
-		go cannonade(endpoint, pipeline, responses)
+	if !*silent {
+		fmt.Print("done")
+		if *verbose {
+			fmt.Print("\n")
+		}
 	}
 
+	// Fire parallel web requests
+	for c := 0; c < *numClients; c++ {
+		go cannonade(endpoint, *apikey, pipeline, responses)
+	}
+
+	// Gather stats from responses
+	var bar *progressbar.ProgressBar
+	if !*silent && !*verbose {
+		bar = progressbar.New(*numRequests)
+		fmt.Print("\r")
+	}
 	for r := 0; r < *numRequests; r++ {
-		_, err := fmt.Println(<-responses)
-		panicIf(err)
+		response := <-responses
+		latencies[r] = float64(response.Latency) / math.Pow10(6)
+		if !*silent && *verbose {
+			_, err := fmt.Println(response.Body)
+			panicIf(err)
+		}
+		if bar != nil {
+			err = bar.Add(1)
+			panicIf(err)
+		}
+	}
+	if !*silent && !*verbose {
+		fmt.Println()
+	}
+
+	// Print pretty stats table
+	if !*silent {
+		printStats(latencies)
 	}
 }
