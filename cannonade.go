@@ -153,7 +153,7 @@ func cannonade(endpoint string, apikey string, pipeline <-chan []byte, responses
 	}
 }
 
-func printStats(latencies []float64) {
+func printStats(latencies []float64, totalSeconds float64) {
 	min, err := stats.Min(latencies)
 	panicIf(err)
 	median, err := stats.Median(latencies)
@@ -164,7 +164,7 @@ func printStats(latencies []float64) {
 	panicIf(err)
 
 	avg := sum / float64(len(latencies))
-	rps := 1000 / avg
+	rps := float64(len(latencies)) / totalSeconds
 
 	fmt.Println()
 	fmt.Println(" # reqs     Avg     Min     Max  |  Median   req/s  ")
@@ -241,6 +241,7 @@ func main() {
 	}
 
 	// Fire parallel web requests
+	start := time.Now()
 	for c := 0; c < *numClients; c++ {
 		go cannonade(endpoint, *apikey, pipeline, responses)
 	}
@@ -266,9 +267,10 @@ func main() {
 	if !*silent && !*verbose {
 		fmt.Println()
 	}
+	totalSeconds := float64(time.Since(start)) / math.Pow10(9)
 
 	// Print pretty stats table
 	if !*silent {
-		printStats(latencies)
+		printStats(latencies, totalSeconds)
 	}
 }
