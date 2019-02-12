@@ -54,6 +54,7 @@ type Request struct {
 
 type Response struct {
 	Body string
+	Success bool
 	Latency time.Duration
 }
 
@@ -119,7 +120,7 @@ func makeCannonball(img image.Image) []byte {
 	return cannonball
 }
 
-func fire(endpoint string, ball []byte, timeout float64, apikey string) string {
+func fire(endpoint string, ball []byte, timeout float64, apikey string) (string, bool) {
 	client := http.Client{
 		Timeout: time.Duration(timeout * float64(time.Second)),
 	}
@@ -132,29 +133,29 @@ func fire(endpoint string, ball []byte, timeout float64, apikey string) string {
 
 	res, err := client.Post(url, "application/json; charset=utf-8", buf)
 	if err != nil {
-		return fmt.Sprintf("Error while sending the request: %s", err)
+		return fmt.Sprintf("Error while sending the request: %s", err), false
 	}
 
 	buf = new(bytes.Buffer)
 	_, err = buf.ReadFrom(res.Body)
 	if err != nil {
-		return fmt.Sprintf("Error while parsing the response: %s", err)
+		return fmt.Sprintf("Error while parsing the response: %s", err), false
 	}
 
-	return buf.String()
+	return buf.String(), res.StatusCode == 200
 }
 
 func cannonade(endpoint string, timeout float64, apikey string,
 	           pipeline <-chan []byte, responses chan<- Response) {
 	for cannonball := range pipeline {
 		start := time.Now()
-		body := fire(endpoint, cannonball, timeout, apikey)
+		body, success := fire(endpoint, cannonball, timeout, apikey)
 		latency := time.Since(start)
-		responses <- Response{body, latency}
+		responses <- Response{body, success, latency}
 	}
 }
 
-func printStats(latencies []float64, totalSeconds float64) {
+func printStats(latencies []float64, totalSeconds float64, numFails int) {
 	min, err := stats.Min(latencies)
 	panicIf(err)
 	median, err := stats.Median(latencies)
@@ -168,9 +169,10 @@ func printStats(latencies []float64, totalSeconds float64) {
 	rps := float64(len(latencies)) / totalSeconds
 
 	fmt.Println()
-	fmt.Println(" # reqs     Avg     Min     Max  |  Median   req/s  ")
-	fmt.Println("----------------------------------------------------")
+	fmt.Println(" # reqs   # fails     Avg     Min     Max  |  Median   req/s  ")
+	fmt.Println("--------------------------------------------------------------")
 	fmt.Printf("%7d", len(latencies))
+	fmt.Printf("%10d", numFails)
 	fmt.Printf("%8.0f", avg)
 	fmt.Printf("%8.0f", min)
 	fmt.Printf("%8.0f", max)
@@ -226,7 +228,6 @@ func main() {
 	// Create channels
 	pipeline := make(chan []byte, *numRequests)
 	responses := make(chan Response, *numRequests)
-	latencies := make([]float64, *numRequests)
 
 	// Prepare binary requests bodies
 	if !*silent && *numRequests > 1 {
@@ -254,9 +255,14 @@ func main() {
 		bar = progressbar.New(*numRequests)
 		fmt.Print("\r")
 	}
+	var latencies = make([]float64, *numRequests)
+	var numFails = 0
 	for r := 0; r < *numRequests; r++ {
 		response := <-responses
-		latencies[r] = float64(response.Latency) / math.Pow10(6)
+		latencies = append(latencies, float64(response.Latency) / math.Pow10(6))
+		if !response.Success {
+			numFails += 1
+		}
 		if !*silent && *verbose {
 			_, err := fmt.Println(response.Body)
 			panicIf(err)
@@ -273,6 +279,6 @@ func main() {
 
 	// Print pretty stats table
 	if !*silent {
-		printStats(latencies, totalSeconds)
+		printStats(latencies, totalSeconds, numFails)
 	}
 }
