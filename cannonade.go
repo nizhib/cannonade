@@ -43,10 +43,10 @@ import (
 const defaultImage = "example.jpg"
 const defaultNumClients = 8
 const defaultNumRequests = 100
+const defaultTimeout = 10.0
 
 const noiseIterations = 100
 const jpegQuality = 95
-const timeout = 60 * time.Second
 
 type Request struct {
 	Image string `json:"image"`
@@ -119,9 +119,9 @@ func makeCannonball(img image.Image) []byte {
 	return cannonball
 }
 
-func fire(endpoint string, ball []byte, apikey string) string {
+func fire(endpoint string, ball []byte, timeout float64, apikey string) string {
 	client := http.Client{
-		Timeout: timeout,
+		Timeout: time.Duration(timeout * float64(time.Second)),
 	}
 	buf := bytes.NewBuffer(ball)
 
@@ -144,10 +144,11 @@ func fire(endpoint string, ball []byte, apikey string) string {
 	return buf.String()
 }
 
-func cannonade(endpoint string, apikey string, pipeline <-chan []byte, responses chan<- Response) {
+func cannonade(endpoint string, timeout float64, apikey string,
+	           pipeline <-chan []byte, responses chan<- Response) {
 	for cannonball := range pipeline {
 		start := time.Now()
-		body := fire(endpoint, cannonball, apikey)
+		body := fire(endpoint, cannonball, timeout, apikey)
 		latency := time.Since(start)
 		responses <- Response{body, latency}
 	}
@@ -203,6 +204,7 @@ func main() {
 	imagePath := flag.String("image", defaultImage, "path of the image to shoot with")
 	numClients := flag.Int("num-clients", defaultNumClients, "number of parallel requests")
 	numRequests := flag.Int("num-requests", defaultNumRequests, "total number of requests")
+	timeout := flag.Float64("timeout", defaultTimeout, "timeout for waiting the response")
 	apikey := flag.String("apikey", "", "api key to add in the header")
 	verbose := flag.Bool("verbose", false, "Show each response in stdout")
 	silent := flag.Bool("silent", false, "Disable any output")
@@ -217,7 +219,7 @@ func main() {
 	// Open an image to shoot with
 	img, err := readImage(*imagePath)
 	if err != nil {
-		fmt.Printf("Failed opening file as jpeg image: %s", err)
+		fmt.Printf("Failed reading the image: %s\n", err)
 		os.Exit(1)
 	}
 
@@ -227,13 +229,13 @@ func main() {
 	latencies := make([]float64, *numRequests)
 
 	// Prepare binary requests bodies
-	if !*silent {
+	if !*silent && *numRequests > 1 {
 		fmt.Print("Producing cannonballs... ")
 	}
 	for r := 0; r < *numRequests; r++ {
 		pipeline <- makeCannonball(img)
 	}
-	if !*silent {
+	if !*silent && *numRequests > 1 {
 		fmt.Print("done")
 		if *verbose {
 			fmt.Print("\n")
@@ -243,7 +245,7 @@ func main() {
 	// Fire parallel web requests
 	start := time.Now()
 	for c := 0; c < *numClients; c++ {
-		go cannonade(endpoint, *apikey, pipeline, responses)
+		go cannonade(endpoint, *timeout, *apikey, pipeline, responses)
 	}
 
 	// Gather stats from responses
