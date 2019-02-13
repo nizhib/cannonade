@@ -155,7 +155,7 @@ func cannonade(endpoint string, timeout float64, apikey string,
 	}
 }
 
-func printStats(latencies []float64, totalSeconds float64, numFails int) {
+func printStats(latencies []float64, totalSeconds float64, numRequests int, numFails int) {
 	min, err := stats.Min(latencies)
 	panicIf(err)
 	median, err := stats.Median(latencies)
@@ -165,13 +165,13 @@ func printStats(latencies []float64, totalSeconds float64, numFails int) {
 	sum, err := stats.Sum(latencies)
 	panicIf(err)
 
-	avg := sum / float64(len(latencies))
-	rps := float64(len(latencies)) / totalSeconds
+	avg := sum / float64(numRequests)
+	rps := float64(numRequests) / totalSeconds
 
 	fmt.Println()
 	fmt.Println(" # reqs   # fails     Avg     Min     Max  |  Median   req/s  ")
 	fmt.Println("--------------------------------------------------------------")
-	fmt.Printf("%7d", len(latencies))
+	fmt.Printf("%7d", numRequests)
 	fmt.Printf("%10d", numFails)
 	fmt.Printf("%8.0f", avg)
 	fmt.Printf("%8.0f", min)
@@ -255,12 +255,13 @@ func main() {
 		bar = progressbar.New(*numRequests)
 		fmt.Print("\r")
 	}
-	var latencies = make([]float64, *numRequests)
+	var latencies = make([]float64, 0)
 	var numFails = 0
 	for r := 0; r < *numRequests; r++ {
 		response := <-responses
-		latencies[r] = float64(response.Latency) / math.Pow10(6)
-		if !response.Success {
+		if response.Success {
+			latencies = append(latencies, float64(response.Latency) / math.Pow10(6))
+		} else {
 			numFails += 1
 		}
 		if !*silent && *verbose {
@@ -279,6 +280,6 @@ func main() {
 
 	// Print pretty stats table
 	if !*silent {
-		printStats(latencies, totalSeconds, numFails)
+		printStats(latencies, totalSeconds, *numRequests, numFails)
 	}
 }
