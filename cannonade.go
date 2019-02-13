@@ -259,7 +259,7 @@ func main() {
 	var numFails = 0
 	for r := 0; r < *numRequests; r++ {
 		response := <-responses
-		latencies = append(latencies, float64(response.Latency) / math.Pow10(6))
+		latencies[r] = float64(response.Latency) / math.Pow10(6)
 		if !response.Success {
 			numFails += 1
 		}
