@@ -157,13 +157,21 @@ func cannonade(endpoint string, timeout float64, apikey string,
 
 func printStats(latencies []float64, totalSeconds float64, numRequests int, numFails int) {
 	min, err := stats.Min(latencies)
-	panicIf(err)
+	if err != nil {
+		min = -1
+	}
 	median, err := stats.Median(latencies)
-	panicIf(err)
+	if err != nil {
+		median = -1
+	}
 	max, err := stats.Max(latencies)
-	panicIf(err)
+	if err != nil {
+		max = -1
+	}
 	sum, err := stats.Sum(latencies)
-	panicIf(err)
+	if err != nil {
+		sum = -float64(numRequests)
+	}
 
 	avg := sum / float64(numRequests)
 	rps := float64(numRequests) / totalSeconds
