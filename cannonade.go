@@ -158,19 +158,19 @@ func cannonade(endpoint string, timeout float64, apikey string,
 func printStats(latencies []float64, totalSeconds float64, numRequests int, numFails int) {
 	min, err := stats.Min(latencies)
 	if err != nil {
-		min = -1
+		min = math.NaN()
 	}
 	median, err := stats.Median(latencies)
 	if err != nil {
-		median = -1
+		median = math.NaN()
 	}
 	max, err := stats.Max(latencies)
 	if err != nil {
-		max = -1
+		max = math.NaN()
 	}
 	sum, err := stats.Sum(latencies)
 	if err != nil {
-		sum = -float64(numRequests)
+		sum = math.NaN()
 	}
 
 	avg := sum / float64(numRequests)
@@ -202,7 +202,7 @@ func printStats(latencies []float64, totalSeconds float64, numRequests int, numF
 
 	fmt.Println(" # reqs     50%    80%    90%    95%    99%   100%  ")
 	fmt.Println("----------------------------------------------------")
-	fmt.Printf("%7d ", len(latencies))
+	fmt.Printf("%7d ", numRequests)
 	for _, percentile := range percentiles {
 		fmt.Printf("%7.0f", percentile)
 	}
