@@ -176,7 +176,6 @@ func printStats(latencies []float64, totalSeconds float64, numRequests int, numF
 	avg := sum / float64(numRequests)
 	rps := float64(numRequests) / totalSeconds
 
-	fmt.Println()
 	fmt.Println(" # reqs   # fails     Avg     Min     Max  |  Median   req/s  ")
 	fmt.Println("--------------------------------------------------------------")
 	fmt.Printf("%7d", numRequests)
@@ -216,7 +215,8 @@ func main() {
 	numRequests := flag.Int("num-requests", defaultNumRequests, "total number of requests")
 	timeout := flag.Float64("timeout", defaultTimeout, "timeout for waiting the response")
 	apikey := flag.String("apikey", "", "api key to add in the header")
-	verbose := flag.Bool("verbose", false, "Show each response in stdout")
+	verbose := flag.Bool("verbose", false, "Print every response to stdout")
+	progress := flag.Bool("progress", false, "Show progressbar")
 	silent := flag.Bool("silent", false, "Disable any output")
 	flag.Parse()
 	args := flag.Args()
@@ -225,6 +225,12 @@ func main() {
 		os.Exit(1)
 	}
 	endpoint := args[0]
+
+	// Check options compatibility
+	if *progress && *verbose {
+		fmt.Println("Cannot use progress and verbose flags together")
+		os.Exit(1)
+	}
 
 	// Open an image to shoot with
 	img, err := readImage(*imagePath)
@@ -238,17 +244,14 @@ func main() {
 	responses := make(chan Response, *numRequests)
 
 	// Prepare binary requests bodies
-	if !*silent && *numRequests > 1 {
+	if !*silent && *verbose && *numRequests > 1 {
 		fmt.Print("Producing cannonballs... ")
 	}
 	for r := 0; r < *numRequests; r++ {
 		pipeline <- makeCannonball(img)
 	}
-	if !*silent && *numRequests > 1 {
-		fmt.Print("done")
-		if *verbose {
-			fmt.Print("\n")
-		}
+	if !*silent && *verbose && *numRequests > 1 {
+		fmt.Print("done\n")
 	}
 
 	// Fire parallel web requests
@@ -259,7 +262,7 @@ func main() {
 
 	// Gather stats from responses
 	var bar *progressbar.ProgressBar
-	if !*silent && !*verbose {
+	if !*silent && *progress {
 		bar = progressbar.New(*numRequests)
 		fmt.Print("\r")
 	}
@@ -281,7 +284,7 @@ func main() {
 			panicIf(err)
 		}
 	}
-	if !*silent && !*verbose {
+	if !*silent && *progress {
 		fmt.Println()
 	}
 	totalSeconds := float64(time.Since(start)) / math.Pow10(9)

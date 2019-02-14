@@ -20,6 +20,7 @@ Options:
   -num-clients   Number of parallel requests. Default is 8.
   -num-requests  Total number of requests. Default is 100.
   -timeout       Request timeout limit. Default is 10.0.
-  -silent        Disable any output but errors.
   -verbose       Print every response received.
+  -progress      Show additional progressbar.
+  -silent        Disable any output but errors.
 ```
