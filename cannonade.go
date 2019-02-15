@@ -108,10 +108,13 @@ func encodeImage(img *image.Image) string {
 	return encoded
 }
 
-func makeCannonball(img image.Image) []byte {
-	noisy := addNoise(&img)
+func makeCannonball(img image.Image, noNoise bool) []byte {
+	imgToSend := img
+	if !noNoise {
+		imgToSend = addNoise(&img)
+	}
 
-	encoded := encodeImage(&noisy)
+	encoded := encodeImage(&imgToSend)
 
 	req := Request{encoded}
 	cannonball, err := json.Marshal(&req)
@@ -218,6 +221,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Print every response to stdout")
 	progress := flag.Bool("progress", false, "Show progressbar")
 	silent := flag.Bool("silent", false, "Disable any output")
+	noNoise := flag.Bool("no-noise", false, "Disable noise addition to the image")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) == 0 {
@@ -247,8 +251,12 @@ func main() {
 	if !*silent && *verbose && *numRequests > 1 {
 		fmt.Print("Producing cannonballs... ")
 	}
+	req := makeCannonball(img, *noNoise)
 	for r := 0; r < *numRequests; r++ {
-		pipeline <- makeCannonball(img)
+		if !*noNoise {
+			req = makeCannonball(img, *noNoise)
+		}
+		pipeline <- req
 	}
 	if !*silent && *verbose && *numRequests > 1 {
 		fmt.Print("done\n")
