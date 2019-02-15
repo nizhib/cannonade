@@ -108,10 +108,12 @@ func encodeImage(img *image.Image) string {
 	return encoded
 }
 
-func makeCannonball(img image.Image) []byte {
-	noisy := addNoise(&img)
+func makeCannonball(img image.Image, noisy bool) []byte {
+	if noisy {
+		img = addNoise(&img)
+	}
 
-	encoded := encodeImage(&noisy)
+	encoded := encodeImage(&img)
 
 	req := Request{encoded}
 	cannonball, err := json.Marshal(&req)
@@ -211,13 +213,14 @@ func printStats(latencies []float64, totalSeconds float64, numRequests int, numF
 func main() {
 	// Parse CLI options
 	imagePath := flag.String("image", defaultImage, "path of the image to shoot with")
-	numClients := flag.Int("num-clients", defaultNumClients, "number of parallel requests")
 	numRequests := flag.Int("num-requests", defaultNumRequests, "total number of requests")
-	timeout := flag.Float64("timeout", defaultTimeout, "timeout for waiting the response")
-	apikey := flag.String("apikey", "", "api key to add in the header")
-	verbose := flag.Bool("verbose", false, "Print every response to stdout")
-	progress := flag.Bool("progress", false, "Show progressbar")
-	silent := flag.Bool("silent", false, "Disable any output")
+	numClients := flag.Int("num-clients", defaultNumClients, "number of parallel requests")
+	noisy := flag.Bool("noisy", false, "add random noise to each request")
+	timeout := flag.Float64("timeout", defaultTimeout, "request timeout limit")
+	apikey := flag.String("apikey", "", "api key to use as a query parameter")
+	verbose := flag.Bool("verbose", false, "print every response to stdout")
+	progress := flag.Bool("progress", false, "show progressbar")
+	silent := flag.Bool("silent", false, "disable any output but errors")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) == 0 {
@@ -247,8 +250,12 @@ func main() {
 	if !*silent && *verbose && *numRequests > 1 {
 		fmt.Print("Producing cannonballs... ")
 	}
+	cannonball := makeCannonball(img, *noisy)
 	for r := 0; r < *numRequests; r++ {
-		pipeline <- makeCannonball(img)
+		if *noisy && r > 0 {
+			cannonball = makeCannonball(img, *noisy)
+		}
+		pipeline <- cannonball
 	}
 	if !*silent && *verbose && *numRequests > 1 {
 		fmt.Print("done\n")
