@@ -27,7 +27,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/montanaflynn/stats"
 	"github.com/schollz/progressbar"
 	"image"
 	"image/color"
@@ -37,10 +36,15 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/montanaflynn/stats"
 )
 
 const defaultImage = "example.jpg"
+const defaultSchedule = ""
 const defaultNumClients = 8
 const defaultNumRequests = 100
 const defaultTimeout = 10.0
@@ -48,14 +52,34 @@ const defaultTimeout = 10.0
 const noiseIterations = 100
 const jpegQuality = 95
 
+// Request : A simple API request object with base64-encoded JPEG image
 type Request struct {
 	Image string `json:"image"`
 }
 
+// Response : Body from the API response as well as additional info
 type Response struct {
-	Body string
+	Body    string
 	Success bool
 	Latency time.Duration
+}
+
+// Task : A load pattern to execute
+type Task struct {
+	Endpoint    string
+	Image       image.Image
+	Noisy       bool
+	NumRequests int
+	NumClients  int
+}
+
+// Options: task execution options
+type Options struct {
+	Timeout  float64
+	ApiKey   string
+	Silent   bool
+	Verbose  bool
+	Progress bool
 }
 
 func panicIf(err error) {
@@ -148,7 +172,7 @@ func fire(endpoint string, ball []byte, timeout float64, apikey string) (string,
 }
 
 func cannonade(endpoint string, timeout float64, apikey string,
-	           pipeline <-chan []byte, responses chan<- Response) {
+	pipeline <-chan []byte, responses chan<- Response) {
 	for cannonball := range pipeline {
 		start := time.Now()
 		body, success := fire(endpoint, cannonball, timeout, apikey)
@@ -210,9 +234,72 @@ func printStats(latencies []float64, totalSeconds float64, numRequests int, numF
 	fmt.Print("\n")
 }
 
+func runTask(task *Task, opt *Options) {
+	// Create channels
+	pipeline := make(chan []byte, task.NumRequests)
+	responses := make(chan Response, task.NumRequests)
+
+	// Prepare binary requests bodies
+	if !opt.Silent && opt.Verbose && task.NumRequests > 1 {
+		fmt.Print("Producing cannonballs... ")
+	}
+	cannonball := makeCannonball(task.Image, task.Noisy)
+	for r := 0; r < task.NumRequests; r++ {
+		if task.Noisy && r > 0 {
+			cannonball = makeCannonball(task.Image, task.Noisy)
+		}
+		pipeline <- cannonball
+	}
+	if !opt.Silent && opt.Verbose && task.NumRequests > 1 {
+		fmt.Print("done\n")
+	}
+
+	// Fire parallel web requests
+	start := time.Now()
+	for c := 0; c < task.NumClients; c++ {
+		go cannonade(task.Endpoint, opt.Timeout, opt.ApiKey, pipeline, responses)
+	}
+
+	// Gather stats from responses
+	var bar *progressbar.ProgressBar
+	if !opt.Silent && opt.Progress {
+		bar = progressbar.New(task.NumRequests)
+		fmt.Print("\r")
+	}
+	var latencies = make([]float64, 0)
+	var numFails = 0
+	for r := 0; r < task.NumRequests; r++ {
+		response := <-responses
+		if response.Success {
+			latencies = append(latencies, float64(response.Latency)/math.Pow10(6))
+		} else {
+			numFails++
+		}
+		if !opt.Silent && opt.Verbose {
+			_, err := fmt.Println(response.Body)
+			panicIf(err)
+		}
+		if bar != nil {
+			err := bar.Add(1)
+			panicIf(err)
+		}
+	}
+	if !opt.Silent && opt.Progress {
+		fmt.Println()
+	}
+	totalSeconds := float64(time.Since(start)) / math.Pow10(9)
+
+	// Print pretty stats table
+	if !opt.Silent {
+		fmt.Printf("\nTask: %d@%d\n\n", task.NumRequests, task.NumClients)
+		printStats(latencies, totalSeconds, task.NumRequests, numFails)
+	}
+}
+
 func main() {
 	// Parse CLI options
 	imagePath := flag.String("image", defaultImage, "path of the image to shoot with")
+	schedule := flag.String("schedule", defaultSchedule, "requests load schedule (5@1,10@2)")
 	numRequests := flag.Int("num-requests", defaultNumRequests, "total number of requests")
 	numClients := flag.Int("num-clients", defaultNumClients, "number of parallel requests")
 	noisy := flag.Bool("noisy", false, "add random noise to each request")
@@ -242,62 +329,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create channels
-	pipeline := make(chan []byte, *numRequests)
-	responses := make(chan Response, *numRequests)
-
-	// Prepare binary requests bodies
-	if !*silent && *verbose && *numRequests > 1 {
-		fmt.Print("Producing cannonballs... ")
+	task := Task{
+		Endpoint:    endpoint,
+		Image:       img,
+		Noisy:       *noisy,
+		NumClients:  *numClients,
+		NumRequests: *numRequests,
 	}
-	cannonball := makeCannonball(img, *noisy)
-	for r := 0; r < *numRequests; r++ {
-		if *noisy && r > 0 {
-			cannonball = makeCannonball(img, *noisy)
-		}
-		pipeline <- cannonball
-	}
-	if !*silent && *verbose && *numRequests > 1 {
-		fmt.Print("done\n")
+	opt := Options{
+		Silent:   *silent,
+		Verbose:  *verbose,
+		Progress: *progress,
+		Timeout:  *timeout,
+		ApiKey:   *apikey,
 	}
 
-	// Fire parallel web requests
-	start := time.Now()
-	for c := 0; c < *numClients; c++ {
-		go cannonade(endpoint, *timeout, *apikey, pipeline, responses)
+	if *schedule == "" {
+		*schedule = fmt.Sprintf("%d@%d", *numRequests, *numClients)
 	}
 
-	// Gather stats from responses
-	var bar *progressbar.ProgressBar
-	if !*silent && *progress {
-		bar = progressbar.New(*numRequests)
-		fmt.Print("\r")
-	}
-	var latencies = make([]float64, 0)
-	var numFails = 0
-	for r := 0; r < *numRequests; r++ {
-		response := <-responses
-		if response.Success {
-			latencies = append(latencies, float64(response.Latency) / math.Pow10(6))
-		} else {
-			numFails += 1
-		}
-		if !*silent && *verbose {
-			_, err := fmt.Println(response.Body)
-			panicIf(err)
-		}
-		if bar != nil {
-			err = bar.Add(1)
-			panicIf(err)
-		}
-	}
-	if !*silent && *progress {
-		fmt.Println()
-	}
-	totalSeconds := float64(time.Since(start)) / math.Pow10(9)
+	for _, milestone := range strings.Split(*schedule, ",") {
+		numRequests, err := strconv.Atoi(strings.Split(milestone, "@")[0])
+		panicIf(err)
+		task.NumRequests = numRequests
 
-	// Print pretty stats table
-	if !*silent {
-		printStats(latencies, totalSeconds, *numRequests, numFails)
+		numClients, err := strconv.Atoi(strings.Split(milestone, "@")[1])
+		panicIf(err)
+		task.NumClients = numClients
+
+		runTask(&task, &opt)
 	}
 }
