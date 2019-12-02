@@ -27,11 +27,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/schollz/progressbar"
+	"github.com/schollz/progressbar/v2"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/jpeg"
+	"log"
 	"math"
 	"math/rand"
 	"net/http"
@@ -79,6 +80,7 @@ type Options struct {
 	ApiKey   string
 	Silent   bool
 	Verbose  bool
+	Metrics  bool
 	Progress bool
 }
 
@@ -172,11 +174,22 @@ func fire(endpoint string, ball []byte, timeout float64, apikey string) (string,
 }
 
 func cannonade(endpoint string, timeout float64, apikey string,
-	pipeline <-chan []byte, responses chan<- Response) {
+	pipeline <-chan []byte, responses chan<- Response, metrics bool) {
+
+	var logger *log.Logger
+	if metrics {
+		f, err := os.OpenFile("metrics.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		panicIf(err)
+		logger = log.New(f, "", 0)
+	}
+
 	for cannonball := range pipeline {
 		start := time.Now()
 		body, success := fire(endpoint, cannonball, timeout, apikey)
 		latency := time.Since(start)
+		if logger != nil {
+			panicIf(logger.Output(2, fmt.Sprintf("%3.3f", float64(latency)/math.Pow10(6))))
+		}
 		responses <- Response{body, success, latency}
 	}
 }
@@ -257,13 +270,15 @@ func runTask(task *Task, opt *Options) {
 	// Fire parallel web requests
 	start := time.Now()
 	for c := 0; c < task.NumClients; c++ {
-		go cannonade(task.Endpoint, opt.Timeout, opt.ApiKey, pipeline, responses)
+		go cannonade(task.Endpoint, opt.Timeout, opt.ApiKey, pipeline, responses, opt.Metrics)
 	}
 
 	// Gather stats from responses
 	var bar *progressbar.ProgressBar
 	if !opt.Silent && opt.Progress {
 		bar = progressbar.New(task.NumRequests)
+		err := bar.RenderBlank()
+		panicIf(err)
 		fmt.Print("\r")
 	}
 	var latencies = make([]float64, 0)
@@ -306,6 +321,7 @@ func main() {
 	timeout := flag.Float64("timeout", defaultTimeout, "request timeout limit")
 	apikey := flag.String("apikey", "", "api key to use as a query parameter")
 	verbose := flag.Bool("verbose", false, "print every response to stdout")
+	metrics := flag.Bool("metrics", false, "save metrics to metrics.log")
 	progress := flag.Bool("progress", false, "show progressbar")
 	silent := flag.Bool("silent", false, "disable any output but errors")
 	flag.Parse()
@@ -339,6 +355,7 @@ func main() {
 	opt := Options{
 		Silent:   *silent,
 		Verbose:  *verbose,
+		Metrics:  *metrics,
 		Progress: *progress,
 		Timeout:  *timeout,
 		ApiKey:   *apikey,
