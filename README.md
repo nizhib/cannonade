@@ -22,6 +22,7 @@ Options:
   -timeout       Request timeout limit. Default is 10.0.
   -apikey        API Key to use as a query parameter.
   -verbose       Print every response to stdout.
+  -metrics       Save latencies to metrics.log file.
   -progress      Show progressbar.
   -silent        Disable any output but errors.
 ```

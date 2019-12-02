@@ -321,7 +321,7 @@ func main() {
 	timeout := flag.Float64("timeout", defaultTimeout, "request timeout limit")
 	apikey := flag.String("apikey", "", "api key to use as a query parameter")
 	verbose := flag.Bool("verbose", false, "print every response to stdout")
-	metrics := flag.Bool("metrics", false, "save metrics to metrics.log")
+	metrics := flag.Bool("metrics", false, "save latencies to metrics.log file")
 	progress := flag.Bool("progress", false, "show progressbar")
 	silent := flag.Bool("silent", false, "disable any output but errors")
 	flag.Parse()
